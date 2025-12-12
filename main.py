@@ -17,6 +17,11 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+# --- HEALTH CHECK (Wake Up & Status) ---
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Garment Balancer Backend is Ready 🚀"}
+
 # --- CORE ALGORITHM (Your Logic) ---
 def true_thai_balancing(processes, num_operators, time_key="smv"):
     """ 
