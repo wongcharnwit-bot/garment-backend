@@ -288,6 +288,7 @@ async def analyze_file(
 async def balance_dynamic(
     config_str: str = Form(...), 
     time_mode: str = Form(...), # New: "smv" or "ngie"
+    selected_sections_str: str = Form("[]"), # New: JSON list of selected sections
     file: UploadFile = File(...)
 ):
     """
@@ -365,18 +366,50 @@ async def balance_dynamic(
     
     # Global Efficiencies
     eff_smv_global = round((global_total_smv * 100) / global_denom, 1) if global_denom > 0 else 0
-    eff_ngie_global = round((global_total_ngie * 100) / global_denom, 1) if global_denom > 0 else 0
     
+    # --- NEW: % LINE BALANCE CALCULATION ---
+    # Formula: (Sum of Selected Process Times) / (Max Single Process Time * Count of Selected Processes) * 100
+    # We use the totals from the balanced results for the sections the USER SELECTED.
+    
+    # Parse selected sections from form data (passed as JSON string list)
+    selected_sections = []
+    try:
+        if 'selected_sections_str' in locals(): # Check if passed (will handle in arg list update)
+             selected_sections = json.loads(selected_sections_str)
+    except:
+        selected_sections = []
+
+    # If nothing selected, default to ALL sections
+    if not selected_sections:
+        selected_sections = list(sections_data.keys())
+
+    # 1. Get Totals for Selected Sections (using the current time_mode)
+    selected_totals = []
+    for sec_name in selected_sections:
+        # Find the result for this section
+        sec_res = next((r for r in results_list if r["name"] == sec_name), None)
+        if sec_res:
+            selected_totals.append(sec_res["total_time_used"])
+    
+    # 2. Calculate Line Balance %
+    if selected_totals and len(selected_totals) > 0:
+        sum_selected = sum(selected_totals)
+        max_selected = max(selected_totals)
+        count_selected = len(selected_totals)
+        denom_lb = max_selected * count_selected
+        
+        line_balance_eff = round((sum_selected * 100) / denom_lb, 1) if denom_lb > 0 else 0
+    else:
+        line_balance_eff = 0
+
     # --- AI Suggestion (Based on the selected mode) ---
-    selected_eff = eff_ngie_global if time_mode == "ngie" else eff_smv_global
+    selected_eff = eff_smv_global # Default check
     suggestions = []
     
-    if selected_eff < 60:
-        suggestions.append(f"⚠️ {time_mode.upper()} Efficiency is low ({selected_eff}%). Consider reducing total manpower.")
-    elif selected_eff > 90:
-        suggestions.append(f"✅ Excellent {time_mode.upper()} Efficiency ({selected_eff}%).")
-    else:
-        suggestions.append(f"ℹ️ Efficiency is standard ({selected_eff}%).")
+    if line_balance_eff < 60:
+        suggestions.append(f"⚠️ Line Balance is low ({line_balance_eff}%). Consider combining processes.")
+    elif line_balance_eff > 90:
+        suggestions.append(f"✅ Excellent Line Balance ({line_balance_eff}%).")
     
     if line_bottleneck > 0:
         bn_secs = [res["name"] for res in results_list if res["section_bn"] == line_bottleneck]
@@ -396,8 +429,8 @@ async def balance_dynamic(
     return {
         "bottleneck": round(line_bottleneck, 2),
         "output": output,
-        "eff_smv": eff_smv_global,   # Return Both
-        "eff_ngie": eff_ngie_global, # Return Both
+        "eff_smv": eff_smv_global,   
+        "line_balance_eff": line_balance_eff, # NEW REPLACEMENT
         "suggest": " ".join(suggestions),
         "sections_results": results_list
     }
